@@ -320,7 +320,7 @@ public class OtaUpdatePlugin implements FlutterPlugin, ActivityAware, EventChann
         handler.post(new Runnable() {
                          @Override
                          public void run() {
-                             executeInstallation(fileUri, downloadedFile);
+                             executeInstallation(destination, downloadedFile);
                          }
                      }
 
@@ -333,32 +333,30 @@ public class OtaUpdatePlugin implements FlutterPlugin, ActivityAware, EventChann
      * For android API level >= 24 start intent for ACTION_INSTALL_PACKAGE (native installer)
      * For android API level < 24 start intent ACTION_VIEW (open file, android should prompt for installation)
      *
-     * @param fileUri        Uri for file path
+     * @param fileUrl        File Path
      * @param downloadedFile Downloaded file
      */
-    private void executeInstallation(Uri fileUri, File downloadedFile) {
-        Intent intent;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            //AUTHORITY NEEDS TO BE THE SAME ALSO IN MANIFEST
-            Uri apkUri = FileProvider.getUriForFile(context, androidProviderAuthority, downloadedFile);
-            intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-            intent.setData(apkUri);
-            intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        } else {
-            intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(fileUri, "application/vnd.android.package-archive");
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        }
-        //SEND INSTALLING EVENT
-        if (progressSink != null) {
-            //NOTE: We have to start intent before sending event to stream
-            //if application tries to programatically terminate app it may produce race condition
-            //and application may end before intent is dispatched
-            context.startActivity(intent);
-            progressSink.success(Arrays.asList("" + OtaStatus.INSTALLING.ordinal(), ""));
-            progressSink.endOfStream();
-            progressSink = null;
+    private void executeInstallation(String fileUrl, File downloadedFile) {
+        String command = "pm install -r '" + fileUrl + "'";
+
+        try {
+            Process process = Runtime.getRuntime().exec(new String[]{"su", "-c", command});
+
+            process.waitFor();
+
+            int exitValue = process.exitValue();
+
+            if(exitValue == 0) {
+                progressSink.success(Arrays.asList("" + OtaStatus.INSTALLING.ordinal(), ""));
+                progressSink.endOfStream();
+                progressSink = null;
+            } else {
+                reportError(OtaStatus.INTERNAL_ERROR, "Non-zero exit code", new Exception("Status code: " + String.valueOf(exitValue)));
+            }
+        } catch (IOException e) {
+            reportError(OtaStatus.INTERNAL_ERROR, "Failed to install APK", e);
+        } catch (InterruptedException e) {
+            reportError(OtaStatus.INTERNAL_ERROR, "System was interrupted while installing APK", e);
         }
     }
 
